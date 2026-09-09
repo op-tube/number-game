@@ -14,7 +14,7 @@ type Player = {
   count: number;
   manual_count: number;
   bonus_count: number;
-  is_bot: number; // 0 or 1
+  is_bot: number;
 };
 
 // ─── App ─────────────────────────────────────────────────────────────────
@@ -25,7 +25,7 @@ const app = new Hono<{ Bindings: Env }>();
 function getWeekStart(date: Date): string {
   const d = new Date(date);
   d.setUTCHours(22, 0, 0, 0);
-  const day = d.getUTCDay(); // 0=Sun, 6=Sat
+  const day = d.getUTCDay();
   const diff = (day === 6) ? 0 : (day + 1) % 7;
   d.setUTCDate(d.getUTCDate() - diff);
   return d.toISOString().split("T")[0];
@@ -50,7 +50,6 @@ async function getCurrentDay(db: D1Database): Promise<string> {
     return day;
   }
   if (settings.value !== day) {
-    // Reset weekly
     await db
       .prepare(
         "INSERT INTO history (day, player_id, name, count) SELECT ?, id, name, count FROM players WHERE count > 0"
@@ -75,10 +74,8 @@ async function ensureState(c: any) {
 
 // ─── Routes ─────────────────────────────────────────────────────────────
 
-// Test route
 app.get("/ping", (c) => c.json({ status: "ok" }));
 
-// Login – create/retrieve player, create a bot for them if new
 app.post("/api/player/login", async (c) => {
   try {
     await ensureState(c);
@@ -90,7 +87,6 @@ app.post("/api/player/login", async (c) => {
     const sanitized = name.trim().replace(/\s+/g, "-");
     const playerId = sanitized.toLowerCase();
 
-    // Check if already exists
     const existing = await db
       .prepare("SELECT id FROM players WHERE id = ?")
       .bind(playerId)
@@ -108,7 +104,6 @@ app.post("/api/player/login", async (c) => {
       });
     }
 
-    // Create player
     await db
       .prepare(
         "INSERT INTO players (id, name, count, manual_count, bonus_count, is_bot) VALUES (?, ?, ?, ?, ?, ?)"
@@ -116,7 +111,6 @@ app.post("/api/player/login", async (c) => {
       .bind(playerId, sanitized, 0, 0, 0, 0)
       .run();
 
-    // Create a personal bot
     const botId = String(Math.floor(100000000 + Math.random() * 900000000));
     await db
       .prepare(
@@ -141,7 +135,6 @@ app.post("/api/player/login", async (c) => {
   }
 });
 
-// Subscribe for push notifications
 app.post("/api/subscribe", async (c) => {
   try {
     const { playerId, subscription } = await c.req.json();
@@ -168,7 +161,6 @@ app.post("/api/subscribe", async (c) => {
   }
 });
 
-// Submit – send local counts to server
 app.post("/api/submit", async (c) => {
   try {
     await ensureState(c);
@@ -206,7 +198,6 @@ app.post("/api/submit", async (c) => {
   }
 });
 
-// State endpoint
 app.get("/api/state", async (c) => {
   try {
     await ensureState(c);
@@ -228,7 +219,6 @@ app.get("/api/state", async (c) => {
   }
 });
 
-// History endpoint
 app.get("/api/history", async (c) => {
   try {
     await ensureState(c);
@@ -248,7 +238,8 @@ app.get("/api/history", async (c) => {
   }
 });
 
-// ─── Frontend HTML (served at root) ─────────────────────────────────────
+// ─── Frontend HTML ─────────────────────────────────────────────────────
+
 const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -323,6 +314,8 @@ const html = `<!DOCTYPE html>
     <div class="history-screen" id="history-screen"></div>
   </div>
   <script>
+    console.log('✅ Script loaded');
+    
     let playerId = null;
     let localCount = 0;
     let bonusCount = 0;
@@ -347,6 +340,7 @@ const html = `<!DOCTYPE html>
     }
 
     async function login() {
+      console.log('Login function called');
       const name = document.getElementById('player-name').value.trim();
       if (!name || name.length < 4) {
         alert('Please enter a name with at least 4 characters.');
@@ -370,15 +364,19 @@ const html = `<!DOCTYPE html>
         updateState();
         setInterval(updateState, 5000);
       } catch (err) {
+        console.error('Login failed:', err);
         alert('Login failed: ' + err.message);
       }
     }
 
-    // --- Attach event listener to Play button ---
-    document.addEventListener('DOMContentLoaded', function() {
-      const btn = document.getElementById('play-btn');
-      if (btn) btn.addEventListener('click', login);
-    });
+    // Attach event listener directly
+    const btn = document.getElementById('play-btn');
+    if (btn) {
+      console.log('✅ Play button found');
+      btn.addEventListener('click', login);
+    } else {
+      console.error('❌ Play button not found');
+    }
 
     function increment() {
       if (!gameActive) {
