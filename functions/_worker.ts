@@ -25,7 +25,7 @@ type Subscription = {
 
 // ─── App ─────────────────────────────────────────────────────────────────
 const app = new Hono<{ Bindings: Env }>();
-
+app.get("/ping", (c) => c.json({ status: "ok" }));
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
 function getWeekStart(date: Date): string {
