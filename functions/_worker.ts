@@ -312,7 +312,7 @@ const html = `<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <img id="bg-gif" src="/public/bg.gif" alt="background" />
+  <img id="bg-gif" src="/bg.gif" alt="background" />
   <audio id="audio-player" loop></audio>
   <div class="container">
     <div class="login-screen" id="login-screen">
