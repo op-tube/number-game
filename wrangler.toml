@@ -6,3 +6,5 @@ compatibility_date = "2024-01-01"
 binding = "DB"
 database_name = "number-game-db"
 database_id = "39a27547-a5dc-476e-a383-d68d56cce1b7"
+[assets]
+bucket = "./public"
