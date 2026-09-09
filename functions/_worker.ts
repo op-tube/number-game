@@ -313,6 +313,7 @@ const html = `<!DOCTYPE html>
     </div>
     <div class="history-screen" id="history-screen"></div>
   </div>
+  <script>alert('test2');</script>
   <script>
     console.log('✅ Script loaded');
     
