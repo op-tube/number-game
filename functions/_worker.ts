@@ -301,7 +301,7 @@ const html = `<!DOCTYPE html>
       <h1>🎮 Number Game</h1>
       <p style="color: #00FF00; font-size: 1em; margin-bottom: 20px;">Enter your name (4+ characters)</p>
       <input type="text" id="player-name" placeholder="e.g. Player123" />
-      <button onclick="login()">Play</button>
+      <button id="play-btn">Play</button>
     </div>
     <div class="game-screen" id="game-screen">
       <div class="counter" id="counter">0</div>
@@ -373,6 +373,12 @@ const html = `<!DOCTYPE html>
         alert('Login failed: ' + err.message);
       }
     }
+
+    // --- Attach event listener to Play button ---
+    document.addEventListener('DOMContentLoaded', function() {
+      const btn = document.getElementById('play-btn');
+      if (btn) btn.addEventListener('click', login);
+    });
 
     function increment() {
       if (!gameActive) {
