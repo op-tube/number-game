@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { serveStatic } from "hono/cloudflare-workers";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 type Env = {
@@ -114,9 +113,9 @@ async function ensureState(c: any) {
 // ─── Routes ─────────────────────────────────────────────────────────────
 
 // Serve static files from /public
-app.use("/public/*", serveStatic({ root: "./" }));
 
-app.get("/service-worker.js", serveStatic({ path: "./public/service-worker.js" }));
+
+
 
 // Login – create/retrieve player, create a bot for them if new
 app.post("/api/player/login", async (c) => {
