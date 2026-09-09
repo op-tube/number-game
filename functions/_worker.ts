@@ -313,175 +313,203 @@ const html = `<!DOCTYPE html>
     </div>
     <div class="history-screen" id="history-screen"></div>
   </div>
-  <script>alert('test2');</script>
+
   <script>
-    console.log('✅ Script loaded');
-    
+    console.log("Script loaded");
+
     let playerId = null;
     let localCount = 0;
     let bonusCount = 0;
     let totalCount = 0;
     let gameActive = true;
 
-    const audioPlayer = document.getElementById('audio-player');
-    const audioBtn = document.getElementById('audio-btn');
+    const audioPlayer = document.getElementById("audio-player");
+    const audioBtn = document.getElementById("audio-btn");
     let audioPlaying = false;
 
     function toggleAudio() {
       if (audioPlaying) {
         audioPlayer.pause();
-        audioBtn.textContent = '🔇';
+        audioBtn.textContent = "🔇";
         audioPlaying = false;
       } else {
-        audioPlayer.src = 'https://archive.org/download/CountingUpOn1Tap/AUD-20260124-WA0004.mp3';
-        audioPlayer.play().catch(() => {});
-        audioBtn.textContent = '🔊';
+        audioPlayer.src = "https://archive.org/download/CountingUpOn1Tap/AUD-20260124-WA0004.mp3";
+        audioPlayer.play()["catch"](function() {});
+        audioBtn.textContent = "🔊";
         audioPlaying = true;
       }
     }
 
     async function login() {
-      console.log('Login function called');
-      const name = document.getElementById('player-name').value.trim();
+      console.log("Login called");
+      const name = document.getElementById("player-name").value.trim();
       if (!name || name.length < 4) {
-        alert('Please enter a name with at least 4 characters.');
+        alert("Please enter a name with at least 4 characters.");
         return;
       }
       try {
-        const res = await fetch('/api/player/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name })
+        const res = await fetch("/api/player/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name })
         });
         const data = await res.json();
         if (data.error) {
-          alert('Error: ' + data.error);
+          alert("Error: " + data.error);
           return;
         }
         playerId = data.playerId;
-        localStorage.setItem('playerName', name);
-        document.getElementById('login-screen').style.display = 'none';
-        document.getElementById('game-screen').classList.add('active');
+        localStorage.setItem("playerName", name);
+        document.getElementById("login-screen").style.display = "none";
+        document.getElementById("game-screen").classList.add("active");
         updateState();
         setInterval(updateState, 5000);
       } catch (err) {
-        console.error('Login failed:', err);
-        alert('Login failed: ' + err.message);
+        console.error("Login failed:", err);
+        alert("Login failed: " + err.message);
       }
-    }
-
-    // Attach event listener directly
-    const btn = document.getElementById('play-btn');
-    if (btn) {
-      console.log('✅ Play button found');
-      btn.addEventListener('click', login);
-    } else {
-      console.error('❌ Play button not found');
     }
 
     function increment() {
       if (!gameActive) {
-        alert('Game is closed for the week.');
+        alert("Game is closed for the week.");
         return;
       }
-      localCount++;
+      localCount = localCount + 1;
       totalCount = localCount + bonusCount;
-      document.getElementById('counter').textContent = totalCount;
-      document.getElementById('player-count').textContent = 'Your count: ' + totalCount;
+      document.getElementById("counter").textContent = totalCount;
+      document.getElementById("player-count").textContent = "Your count: " + totalCount;
 
-      let bonusMsg = '';
+      var bonusMsg = "";
       if (Math.random() < 1/20) {
-        bonusCount += 10;
-        totalCount += 10;
-        bonusMsg = '🎉 +10 free numbers!';
+        bonusCount = bonusCount + 10;
+        totalCount = totalCount + 10;
+        bonusMsg = "🎉 +10 free numbers!";
       }
       if (Math.random() < 1/200) {
-        bonusCount += 100;
-        totalCount += 100;
-        bonusMsg = '🎉🎉 +100 free numbers!';
+        bonusCount = bonusCount + 100;
+        totalCount = totalCount + 100;
+        bonusMsg = "🎉🎉 +100 free numbers!";
       }
-      if (bonusMsg) {
-        document.getElementById('bonus-notice').textContent = bonusMsg;
-        document.getElementById('counter').textContent = totalCount;
-        document.getElementById('player-count').textContent = 'Your count: ' + totalCount;
-        setTimeout(() => document.getElementById('bonus-notice').textContent = '', 3000);
+      if (bonusMsg !== "") {
+        document.getElementById("bonus-notice").textContent = bonusMsg;
+        document.getElementById("counter").textContent = totalCount;
+        document.getElementById("player-count").textContent = "Your count: " + totalCount;
+        setTimeout(function() {
+          document.getElementById("bonus-notice").textContent = "";
+        }, 3000);
       }
     }
 
     async function submitCount() {
       if (localCount === 0 && bonusCount === 0) {
-        alert('You haven\'t added any numbers yet.');
+        alert("You haven't added any numbers yet.");
         return;
       }
       try {
-        const res = await fetch('/api/submit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ playerId, manualIncrements: localCount, bonusIncrements: bonusCount })
+        const res = await fetch("/api/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            playerId: playerId,
+            manualIncrements: localCount,
+            bonusIncrements: bonusCount
+          })
         });
         const data = await res.json();
         if (data.error) {
-          alert('Error: ' + data.error);
+          alert("Error: " + data.error);
           return;
         }
         window.location.href = data.redirectUrl;
       } catch (err) {
-        alert('Submit failed: ' + err.message);
+        alert("Submit failed: " + err.message);
       }
     }
 
     async function updateState() {
       try {
-        const res = await fetch('/api/state');
+        const res = await fetch("/api/state");
         const data = await res.json();
         gameActive = data.gameActive;
-        const rankingsEl = document.getElementById('rankings');
-        rankingsEl.innerHTML = data.rankings.map((p, i) =>
-          '<div class="ranking-item"><span class="ranking-position">#' + (i+1) + '</span><span>' + p.name + '</span><span>' + p.count + '</span></div>'
-        ).join('');
+        var rankingsEl = document.getElementById("rankings");
+        var html = "";
+        for (var i = 0; i < data.rankings.length; i++) {
+          var p = data.rankings[i];
+          html += '<div class="ranking-item"><span class="ranking-position">#' + (i+1) + '</span><span>' + p.name + '</span><span>' + p.count + '</span></div>';
+        }
+        rankingsEl.innerHTML = html;
 
         if (!gameActive) {
-          document.getElementById('game-screen').classList.remove('active');
-          document.getElementById('game-closed').style.display = 'block';
-          document.getElementById('final-rankings').innerHTML = '<h2 style="color:#00FF00;">Leaderboard</h2>' + data.rankings.map((p, i) =>
-            '<div class="ranking-item"><span class="ranking-position">#' + (i+1) + '</span><span>' + p.name + '</span><span>' + p.count + '</span></div>'
-          ).join('');
+          document.getElementById("game-screen").classList.remove("active");
+          document.getElementById("game-closed").style.display = "block";
+          var finalHtml = '<h2 style="color:#00FF00;">Leaderboard</h2>';
+          for (var j = 0; j < data.rankings.length; j++) {
+            var q = data.rankings[j];
+            finalHtml += '<div class="ranking-item"><span class="ranking-position">#' + (j+1) + '</span><span>' + q.name + '</span><span>' + q.count + '</span></div>';
+          }
+          document.getElementById("final-rankings").innerHTML = finalHtml;
         } else {
-          document.getElementById('game-screen').classList.add('active');
-          document.getElementById('game-closed').style.display = 'none';
+          document.getElementById("game-screen").classList.add("active");
+          document.getElementById("game-closed").style.display = "none";
         }
       } catch (err) {
-        console.error('State update error:', err);
+        console.error("State update error:", err);
       }
     }
 
     async function showHistory() {
       try {
-        const res = await fetch('/api/history');
+        const res = await fetch("/api/history");
         const history = await res.json();
-        document.getElementById('game-screen').classList.remove('active');
-        document.getElementById('game-closed').style.display = 'none';
-        const historyScreen = document.getElementById('history-screen');
-        historyScreen.classList.add('active');
-        if (Object.keys(history).length === 0) {
+        document.getElementById("game-screen").classList.remove("active");
+        document.getElementById("game-closed").style.display = "none";
+        var historyScreen = document.getElementById("history-screen");
+        historyScreen.classList.add("active");
+        var keys = Object.keys(history);
+        if (keys.length === 0) {
           historyScreen.innerHTML = '<button class="nav-btn" onclick="location.reload()" style="margin-bottom:20px;">Back</button><div style="text-align:center;color:#FF00FF;">No history yet</div>';
         } else {
-          historyScreen.innerHTML = '<button class="nav-btn" onclick="location.reload()" style="margin-bottom:20px;">Back</button>' +
-            Object.entries(history).map(([day, players]) =>
-              '<div class="history-day"><h3>📅 ' + day + '</h3>' +
-              players.sort((a,b) => b.count - a.count).map((p, idx) =>
-                '<div class="ranking-item"><span class="ranking-position">#' + (idx+1) + '</span><span>' + p.name + '</span><span>' + p.count + '</span></div>'
-              ).join('') + '</div>'
-            ).join('');
+          var historyHtml = '<button class="nav-btn" onclick="location.reload()" style="margin-bottom:20px;">Back</button>';
+          for (var k = 0; k < keys.length; k++) {
+            var day = keys[k];
+            var players = history[day];
+            players.sort(function(a, b) { return b.count - a.count; });
+            historyHtml += '<div class="history-day"><h3>📅 ' + day + '</h3>';
+            for (var m = 0; m < players.length; m++) {
+              var p = players[m];
+              historyHtml += '<div class="ranking-item"><span class="ranking-position">#' + (m+1) + '</span><span>' + p.name + '</span><span>' + p.count + '</span></div>';
+            }
+            historyHtml += '</div>';
+          }
+          historyScreen.innerHTML = historyHtml;
         }
       } catch (err) {
-        alert('Failed to load history: ' + err.message);
+        alert("Failed to load history: " + err.message);
       }
     }
 
-    const saved = localStorage.getItem('playerName');
-    if (saved) document.getElementById('player-name').value = saved;
-    document.getElementById('player-name').addEventListener('keypress', e => { if (e.key === 'Enter') login(); });
+    // Attach event listener after DOM is ready
+    document.addEventListener("DOMContentLoaded", function() {
+      var btn = document.getElementById("play-btn");
+      if (btn) {
+        console.log("Play button found");
+        btn.addEventListener("click", login);
+      } else {
+        console.error("Play button not found");
+      }
+    });
+
+    // Restore saved name
+    var saved = localStorage.getItem("playerName");
+    if (saved) {
+      document.getElementById("player-name").value = saved;
+    }
+    document.getElementById("player-name").addEventListener("keypress", function(e) {
+      if (e.key === "Enter") {
+        login();
+      }
+    });
   </script>
 </body>
 </html>`;
