@@ -11,66 +11,34 @@ type Env = {
 type Player = {
   id: string;
   name: string;
-  count: number;          // total count (manual + bonuses)
-  manual_count: number;   // number of manual taps (charged)
-  bonus_count: number;    // total free numbers earned
-  is_bot: boolean;
-};
-
-type Subscription = {
-  player_id: string;
-  endpoint: string;
-  keys: string;           // JSON string of keys
+  count: number;
+  manual_count: number;
+  bonus_count: number;
+  is_bot: number; // 0 or 1
 };
 
 // ─── App ─────────────────────────────────────────────────────────────────
 const app = new Hono<{ Bindings: Env }>();
-app.get("/ping", (c) => c.json({ status: "ok" }));
+
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
 function getWeekStart(date: Date): string {
-  // Saturday night reset: get the most recent Saturday at 22:00 UTC
   const d = new Date(date);
   d.setUTCHours(22, 0, 0, 0);
   const day = d.getUTCDay(); // 0=Sun, 6=Sat
-  const diff = (day === 6) ? 0 : (day + 1) % 7; // days to go back to Saturday
+  const diff = (day === 6) ? 0 : (day + 1) % 7;
   d.setUTCDate(d.getUTCDate() - diff);
   return d.toISOString().split("T")[0];
 }
 
 function isGameActive(now: Date): boolean {
-  const hours = now.getUTCHours();
-  const minutes = now.getUTCMinutes();
-  const currentMinutes = hours * 60 + minutes;
-  return currentMinutes < 22 * 60; // before 22:00 UTC
-}
-
-async function getOrCreatePlayer(
-  db: D1Database,
-  id: string,
-  name: string,
-  isBot = false
-): Promise<Player> {
-  const row = await db
-    .prepare("SELECT * FROM players WHERE id = ?")
-    .bind(id)
-    .first<Player>();
-  if (row) return row;
-
-  // Create new player
-  await db
-    .prepare(
-      "INSERT INTO players (id, name, count, manual_count, bonus_count, is_bot) VALUES (?, ?, ?, ?, ?, ?)"
-    )
-    .bind(id, name, 0, 0, 0, isBot ? 1 : 0)
-    .run();
-  return { id, name, count: 0, manual_count: 0, bonus_count: 0, is_bot };
+  const minutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  return minutes < 22 * 60;
 }
 
 async function getCurrentDay(db: D1Database): Promise<string> {
   const now = new Date();
   const day = getWeekStart(now);
-  // We'll store current day in a settings table
   let settings = await db
     .prepare("SELECT value FROM settings WHERE key = 'current_day'")
     .first<{ value: string }>();
@@ -81,9 +49,8 @@ async function getCurrentDay(db: D1Database): Promise<string> {
       .run();
     return day;
   }
-  // If the stored day is older than today's week start, reset the game
   if (settings.value !== day) {
-    // Reset: move all players' counts to history, then reset counts
+    // Reset weekly
     await db
       .prepare(
         "INSERT INTO history (day, player_id, name, count) SELECT ?, id, name, count FROM players WHERE count > 0"
@@ -95,13 +62,9 @@ async function getCurrentDay(db: D1Database): Promise<string> {
       .prepare("UPDATE settings SET value = ? WHERE key = 'current_day'")
       .bind(day)
       .run();
-    // Re‑create bots for all active players? We'll keep bots that are in players table
-    // Bots are automatically created on login, so we can just leave them.
   }
   return day;
 }
-
-// ─── Middleware to ensure DB and state ──────────────────────────────────
 
 async function ensureState(c: any) {
   const db = c.env.DB;
@@ -112,161 +75,180 @@ async function ensureState(c: any) {
 
 // ─── Routes ─────────────────────────────────────────────────────────────
 
-// Serve static files from /public
-
-
-
+// Test route
+app.get("/ping", (c) => c.json({ status: "ok" }));
 
 // Login – create/retrieve player, create a bot for them if new
 app.post("/api/player/login", async (c) => {
-  await ensureState(c);
-  const db = c.env.DB;
-  const { name } = await c.req.json();
-  if (!name || name.trim().length < 4) {
-    return c.json({ error: "Name must be at least 4 characters" }, 400);
-  }
-  const sanitized = name.trim().replace(/\s+/g, "-");
-  const playerId = sanitized.toLowerCase();
+  try {
+    await ensureState(c);
+    const db = c.env.DB;
+    const { name } = await c.req.json();
+    if (!name || name.trim().length < 4) {
+      return c.json({ error: "Name must be at least 4 characters" }, 400);
+    }
+    const sanitized = name.trim().replace(/\s+/g, "-");
+    const playerId = sanitized.toLowerCase();
 
-  // Check if already exists
-  const existing = await db
-    .prepare("SELECT id FROM players WHERE id = ?")
-    .bind(playerId)
-    .first();
-  if (existing) {
-    // If player exists, just return their info
+    // Check if already exists
+    const existing = await db
+      .prepare("SELECT id FROM players WHERE id = ?")
+      .bind(playerId)
+      .first();
+    if (existing) {
+      const player = await db
+        .prepare("SELECT * FROM players WHERE id = ?")
+        .bind(playerId)
+        .first<Player>();
+      if (!player) return c.json({ error: "Player not found" }, 404);
+      return c.json({
+        playerId,
+        player: { name: player.name, count: player.count },
+        vapidPublicKey: c.env.VAPID_PUBLIC_KEY,
+      });
+    }
+
+    // Create player
+    await db
+      .prepare(
+        "INSERT INTO players (id, name, count, manual_count, bonus_count, is_bot) VALUES (?, ?, ?, ?, ?, ?)"
+      )
+      .bind(playerId, sanitized, 0, 0, 0, 0)
+      .run();
+
+    // Create a personal bot
+    const botId = String(Math.floor(100000000 + Math.random() * 900000000));
+    await db
+      .prepare(
+        "INSERT INTO players (id, name, count, manual_count, bonus_count, is_bot) VALUES (?, ?, ?, ?, ?, ?)"
+      )
+      .bind(botId, botId, 0, 0, 0, 1)
+      .run();
+
+    const player = await db
+      .prepare("SELECT * FROM players WHERE id = ?")
+      .bind(playerId)
+      .first<Player>();
+
+    return c.json({
+      playerId,
+      player: { name: player!.name, count: player!.count },
+      vapidPublicKey: c.env.VAPID_PUBLIC_KEY,
+    });
+  } catch (err: any) {
+    console.error("Login error:", err);
+    return c.json({ error: err.message || "Internal server error" }, 500);
+  }
+});
+
+// Subscribe for push notifications
+app.post("/api/subscribe", async (c) => {
+  try {
+    const { playerId, subscription } = await c.req.json();
+    if (!playerId || !subscription?.endpoint) {
+      return c.json({ error: "Invalid subscription" }, 400);
+    }
+    const db = c.env.DB;
+    await db
+      .prepare(
+        "INSERT INTO subscriptions (player_id, endpoint, keys) VALUES (?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET endpoint = ?, keys = ?"
+      )
+      .bind(
+        playerId,
+        subscription.endpoint,
+        JSON.stringify(subscription.keys),
+        subscription.endpoint,
+        JSON.stringify(subscription.keys)
+      )
+      .run();
+    return c.json({ ok: true });
+  } catch (err: any) {
+    console.error("Subscribe error:", err);
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// Submit – send local counts to server
+app.post("/api/submit", async (c) => {
+  try {
+    await ensureState(c);
+    const db = c.env.DB;
+    const { playerId, manualIncrements, bonusIncrements } = await c.req.json();
+    if (!playerId) return c.json({ error: "Missing playerId" }, 400);
+
     const player = await db
       .prepare("SELECT * FROM players WHERE id = ?")
       .bind(playerId)
       .first<Player>();
     if (!player) return c.json({ error: "Player not found" }, 404);
+
+    const newManual = player.manual_count + manualIncrements;
+    const newBonus = player.bonus_count + bonusIncrements;
+    const newTotal = player.count + manualIncrements + bonusIncrements;
+    await db
+      .prepare(
+        "UPDATE players SET count = ?, manual_count = ?, bonus_count = ? WHERE id = ?"
+      )
+      .bind(newTotal, newManual, newBonus, playerId)
+      .run();
+
+    const payable = manualIncrements;
+    const amount = (payable * 0.01).toFixed(2);
+
     return c.json({
-      playerId,
-      player: { name: player.name, count: player.count },
-      vapidPublicKey: c.env.VAPID_PUBLIC_KEY,
+      redirectUrl: `https://www.paypal.me/number-game-3bd5/${amount}`,
+      totalCount: newTotal,
+      playerCount: newManual,
     });
+  } catch (err: any) {
+    console.error("Submit error:", err);
+    return c.json({ error: err.message }, 500);
   }
-
-  // Create player
-  await db
-    .prepare(
-      "INSERT INTO players (id, name, count, manual_count, bonus_count, is_bot) VALUES (?, ?, ?, ?, ?, ?)"
-    )
-    .bind(playerId, sanitized, 0, 0, 0, 0)
-    .run();
-
-  // Create a bot for this player (random 9‑digit numeric name)
-  const botId = String(Math.floor(100000000 + Math.random() * 900000000));
-  await db
-    .prepare(
-      "INSERT INTO players (id, name, count, manual_count, bonus_count, is_bot) VALUES (?, ?, ?, ?, ?, ?)"
-    )
-    .bind(botId, botId, 0, 0, 0, 1)
-    .run();
-
-  const player = await db
-    .prepare("SELECT * FROM players WHERE id = ?")
-    .bind(playerId)
-    .first<Player>();
-
-  return c.json({
-    playerId,
-    player: { name: player!.name, count: player!.count },
-    vapidPublicKey: c.env.VAPID_PUBLIC_KEY,
-  });
 });
 
-// Subscribe for push notifications
-app.post("/api/subscribe", async (c) => {
-  const { playerId, subscription } = await c.req.json();
-  if (!playerId || !subscription?.endpoint) {
-    return c.json({ error: "Invalid subscription" }, 400);
-  }
-  const db = c.env.DB;
-  await db
-    .prepare(
-      "INSERT INTO subscriptions (player_id, endpoint, keys) VALUES (?, ?, ?) ON CONFLICT(player_id) DO UPDATE SET endpoint = ?, keys = ?"
-    )
-    .bind(playerId, subscription.endpoint, JSON.stringify(subscription.keys), subscription.endpoint, JSON.stringify(subscription.keys))
-    .run();
-  return c.json({ ok: true });
-});
-
-// Submit – send local counts to server
-app.post("/api/submit", async (c) => {
-  await ensureState(c);
-  const db = c.env.DB;
-  const { playerId, manualIncrements, bonusIncrements } = await c.req.json();
-  if (!playerId) return c.json({ error: "Missing playerId" }, 400);
-
-  const player = await db
-    .prepare("SELECT * FROM players WHERE id = ?")
-    .bind(playerId)
-    .first<Player>();
-  if (!player) return c.json({ error: "Player not found" }, 404);
-
-  // Update player counts
-  const newManual = player.manual_count + manualIncrements;
-  const newBonus = player.bonus_count + bonusIncrements;
-  const newTotal = player.count + manualIncrements + bonusIncrements;
-  await db
-    .prepare(
-      "UPDATE players SET count = ?, manual_count = ?, bonus_count = ? WHERE id = ?"
-    )
-    .bind(newTotal, newManual, newBonus, playerId)
-    .run();
-
-  // Calculate payable amount (manual increments only, because bonuses are free)
-  // But we also need to subtract any free numbers they might have used? The user says:
-  // "0.01 x (the amount of numbers you just submitted - the amount of free numbers you used)"
-  // Here "submitted" = manualIncrements + bonusIncrements, and "free numbers used" = bonusIncrements
-  // So payable = manualIncrements
-  const payable = manualIncrements;
-  const amount = (payable * 0.01).toFixed(2);
-
-  // Redirect to PayPal
-  return c.json({
-    redirectUrl: `https://www.paypal.me/number-game-3bd5/${amount}`,
-    totalCount: newTotal,
-    playerCount: newManual,
-  });
-});
-
-// State endpoint – returns current rankings, game active flag, and per‑player data
+// State endpoint
 app.get("/api/state", async (c) => {
-  await ensureState(c);
-  const db = c.env.DB;
-  const players = await db
-    .prepare("SELECT id, name, count, manual_count, bonus_count, is_bot FROM players ORDER BY count DESC")
-    .all<Player>();
-  const todayTotal = players.results.reduce((sum, p) => sum + p.count, 0);
-  return c.json({
-    totalCount: todayTotal,
-    rankings: players.results.map((p) => ({ id: p.id, name: p.name, count: p.count })),
-    gameActive: c.get("gameActive"),
-    currentDay: c.get("currentDay"),
-    players: players.results,
-  });
+  try {
+    await ensureState(c);
+    const db = c.env.DB;
+    const players = await db
+      .prepare("SELECT id, name, count, manual_count, bonus_count, is_bot FROM players ORDER BY count DESC")
+      .all<Player>();
+    const todayTotal = players.results.reduce((sum, p) => sum + p.count, 0);
+    return c.json({
+      totalCount: todayTotal,
+      rankings: players.results.map((p) => ({ id: p.id, name: p.name, count: p.count })),
+      gameActive: c.get("gameActive"),
+      currentDay: c.get("currentDay"),
+      players: players.results,
+    });
+  } catch (err: any) {
+    console.error("State error:", err);
+    return c.json({ error: err.message }, 500);
+  }
 });
 
 // History endpoint
 app.get("/api/history", async (c) => {
-  await ensureState(c);
-  const db = c.env.DB;
-  const history = await db
-    .prepare("SELECT day, player_id, name, count FROM history ORDER BY day DESC")
-    .all<{ day: string; player_id: string; name: string; count: number }>();
-  // Group by day
-  const grouped: Record<string, any[]> = {};
-  for (const row of history.results) {
-    if (!grouped[row.day]) grouped[row.day] = [];
-    grouped[row.day].push({ id: row.player_id, name: row.name, count: row.count });
+  try {
+    await ensureState(c);
+    const db = c.env.DB;
+    const history = await db
+      .prepare("SELECT day, player_id, name, count FROM history ORDER BY day DESC")
+      .all<{ day: string; player_id: string; name: string; count: number }>();
+    const grouped: Record<string, any[]> = {};
+    for (const row of history.results) {
+      if (!grouped[row.day]) grouped[row.day] = [];
+      grouped[row.day].push({ id: row.player_id, name: row.name, count: row.count });
+    }
+    return c.json(grouped);
+  } catch (err: any) {
+    console.error("History error:", err);
+    return c.json({ error: err.message }, 500);
   }
-  return c.json(grouped);
 });
 
 // ─── Frontend HTML (served at root) ─────────────────────────────────────
-
 const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -342,12 +324,11 @@ const html = `<!DOCTYPE html>
   </div>
   <script>
     let playerId = null;
-    let localCount = 0;          // manual taps
-    let bonusCount = 0;         // free numbers earned
-    let totalCount = 0;         // localCount + bonusCount (displayed)
+    let localCount = 0;
+    let bonusCount = 0;
+    let totalCount = 0;
     let gameActive = true;
 
-    // ─── Audio ──────────────────────────────────────────────────────────
     const audioPlayer = document.getElementById('audio-player');
     const audioBtn = document.getElementById('audio-btn');
     let audioPlaying = false;
@@ -365,45 +346,44 @@ const html = `<!DOCTYPE html>
       }
     }
 
-    // ─── Login ──────────────────────────────────────────────────────────
     async function login() {
       const name = document.getElementById('player-name').value.trim();
       if (!name || name.length < 4) {
         alert('Please enter a name with at least 4 characters.');
         return;
       }
-      const res = await fetch('/api/player/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name })
-      });
-      const data = await res.json();
-      if (data.error) {
-        alert(data.error);
-        return;
+      try {
+        const res = await fetch('/api/player/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name })
+        });
+        const data = await res.json();
+        if (data.error) {
+          alert('Error: ' + data.error);
+          return;
+        }
+        playerId = data.playerId;
+        localStorage.setItem('playerName', name);
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('game-screen').classList.add('active');
+        updateState();
+        setInterval(updateState, 5000);
+      } catch (err) {
+        alert('Login failed: ' + err.message);
       }
-      playerId = data.playerId;
-      localStorage.setItem('playerName', name);
-      document.getElementById('login-screen').style.display = 'none';
-      document.getElementById('game-screen').classList.add('active');
-      updateState();
-      setInterval(updateState, 5000);
-      // Register push if you want (we'll keep it simple)
     }
 
-    // ─── Increment (local only) ────────────────────────────────────────
     function increment() {
       if (!gameActive) {
         alert('Game is closed for the week.');
         return;
       }
-      // Manual increment
       localCount++;
       totalCount = localCount + bonusCount;
       document.getElementById('counter').textContent = totalCount;
       document.getElementById('player-count').textContent = 'Your count: ' + totalCount;
 
-      // Random bonuses
       let bonusMsg = '';
       if (Math.random() < 1/20) {
         bonusCount += 10;
@@ -423,72 +403,77 @@ const html = `<!DOCTYPE html>
       }
     }
 
-    // ─── Submit ─────────────────────────────────────────────────────────
     async function submitCount() {
       if (localCount === 0 && bonusCount === 0) {
         alert('You haven\'t added any numbers yet.');
         return;
       }
-      const res = await fetch('/api/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playerId, manualIncrements: localCount, bonusIncrements: bonusCount })
-      });
-      const data = await res.json();
-      if (data.error) {
-        alert(data.error);
-        return;
+      try {
+        const res = await fetch('/api/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ playerId, manualIncrements: localCount, bonusIncrements: bonusCount })
+        });
+        const data = await res.json();
+        if (data.error) {
+          alert('Error: ' + data.error);
+          return;
+        }
+        window.location.href = data.redirectUrl;
+      } catch (err) {
+        alert('Submit failed: ' + err.message);
       }
-      // Redirect to PayPal
-      window.location.href = data.redirectUrl;
     }
 
-    // ─── State update ──────────────────────────────────────────────────
     async function updateState() {
-      const res = await fetch('/api/state');
-      const data = await res.json();
-      gameActive = data.gameActive;
-      // Update rankings
-      const rankingsEl = document.getElementById('rankings');
-      rankingsEl.innerHTML = data.rankings.map((p, i) =>
-        '<div class="ranking-item"><span class="ranking-position">#' + (i+1) + '</span><span>' + p.name + '</span><span>' + p.count + '</span></div>'
-      ).join('');
-
-      // Check if game is closed
-      if (!gameActive) {
-        document.getElementById('game-screen').classList.remove('active');
-        document.getElementById('game-closed').style.display = 'block';
-        document.getElementById('final-rankings').innerHTML = '<h2 style="color:#00FF00;">Leaderboard</h2>' + data.rankings.map((p, i) =>
+      try {
+        const res = await fetch('/api/state');
+        const data = await res.json();
+        gameActive = data.gameActive;
+        const rankingsEl = document.getElementById('rankings');
+        rankingsEl.innerHTML = data.rankings.map((p, i) =>
           '<div class="ranking-item"><span class="ranking-position">#' + (i+1) + '</span><span>' + p.name + '</span><span>' + p.count + '</span></div>'
         ).join('');
-      } else {
-        document.getElementById('game-screen').classList.add('active');
-        document.getElementById('game-closed').style.display = 'none';
-      }
-    }
 
-    // ─── History ────────────────────────────────────────────────────────
-    async function showHistory() {
-      const res = await fetch('/api/history');
-      const history = await res.json();
-      document.getElementById('game-screen').classList.remove('active');
-      document.getElementById('game-closed').style.display = 'none';
-      const historyScreen = document.getElementById('history-screen');
-      historyScreen.classList.add('active');
-      if (Object.keys(history).length === 0) {
-        historyScreen.innerHTML = '<button class="nav-btn" onclick="location.reload()" style="margin-bottom:20px;">Back</button><div style="text-align:center;color:#FF00FF;">No history yet</div>';
-      } else {
-        historyScreen.innerHTML = '<button class="nav-btn" onclick="location.reload()" style="margin-bottom:20px;">Back</button>' +
-          Object.entries(history).map(([day, players]) =>
-            '<div class="history-day"><h3>📅 ' + day + '</h3>' +
-            players.sort((a,b) => b.count - a.count).map((p, idx) =>
-              '<div class="ranking-item"><span class="ranking-position">#' + (idx+1) + '</span><span>' + p.name + '</span><span>' + p.count + '</span></div>'
-            ).join('') + '</div>'
+        if (!gameActive) {
+          document.getElementById('game-screen').classList.remove('active');
+          document.getElementById('game-closed').style.display = 'block';
+          document.getElementById('final-rankings').innerHTML = '<h2 style="color:#00FF00;">Leaderboard</h2>' + data.rankings.map((p, i) =>
+            '<div class="ranking-item"><span class="ranking-position">#' + (i+1) + '</span><span>' + p.name + '</span><span>' + p.count + '</span></div>'
           ).join('');
+        } else {
+          document.getElementById('game-screen').classList.add('active');
+          document.getElementById('game-closed').style.display = 'none';
+        }
+      } catch (err) {
+        console.error('State update error:', err);
       }
     }
 
-    // ─── Init ───────────────────────────────────────────────────────────
+    async function showHistory() {
+      try {
+        const res = await fetch('/api/history');
+        const history = await res.json();
+        document.getElementById('game-screen').classList.remove('active');
+        document.getElementById('game-closed').style.display = 'none';
+        const historyScreen = document.getElementById('history-screen');
+        historyScreen.classList.add('active');
+        if (Object.keys(history).length === 0) {
+          historyScreen.innerHTML = '<button class="nav-btn" onclick="location.reload()" style="margin-bottom:20px;">Back</button><div style="text-align:center;color:#FF00FF;">No history yet</div>';
+        } else {
+          historyScreen.innerHTML = '<button class="nav-btn" onclick="location.reload()" style="margin-bottom:20px;">Back</button>' +
+            Object.entries(history).map(([day, players]) =>
+              '<div class="history-day"><h3>📅 ' + day + '</h3>' +
+              players.sort((a,b) => b.count - a.count).map((p, idx) =>
+                '<div class="ranking-item"><span class="ranking-position">#' + (idx+1) + '</span><span>' + p.name + '</span><span>' + p.count + '</span></div>'
+              ).join('') + '</div>'
+            ).join('');
+        }
+      } catch (err) {
+        alert('Failed to load history: ' + err.message);
+      }
+    }
+
     const saved = localStorage.getItem('playerName');
     if (saved) document.getElementById('player-name').value = saved;
     document.getElementById('player-name').addEventListener('keypress', e => { if (e.key === 'Enter') login(); });
