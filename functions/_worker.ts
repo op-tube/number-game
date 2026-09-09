@@ -189,7 +189,7 @@ app.post("/api/submit", async (c) => {
     const amount = (payable * 0.01).toFixed(2);
 
     return c.json({
-      redirectUrl: `https://www.paypal.me/number-game-3bd5/${amount}`,
+      redirectUrl: `https://www.paypal.me/numbergame3bd5/${amount}`,
       totalCount: newTotal,
       playerCount: newManual,
     });
